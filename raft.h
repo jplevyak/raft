@@ -73,10 +73,8 @@
 #include <string>
 #include <vector>
 
-namespace raft
-{
-template <typename Server> class Raft
-{
+namespace raft {
+template <typename Server> class Raft {
 public:
   typedef typename Server::Message Message;
   typedef typename Server::LogEntry LogEntry;
@@ -97,8 +95,7 @@ public:
 template <typename Server> Raft<Server> *NewRaft(Server *server, const ::std::string &node);
 
 // The Server template argument of Raft must conform to this interface.
-class RaftServerInterface
-{
+class RaftServerInterface {
 public:
   typedef Raft<RaftServerInterface> RaftClass;
   class Config;   // See RaftConfigPb in raft.proto.

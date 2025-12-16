@@ -851,7 +851,7 @@ TEST_F(RaftTest, VotePersistenceBug) {
   }
 }
 
-// 4. Vote Safety (Log Completeness) Bug
+// Vote Safety (Log Completeness) Bug
 TEST_F(RaftTest, VoteSafety_LogCompleteness) {
   LogEntry config_log_entry(ConfigLogEntry(2));
   StartUp(2, config_log_entry);
@@ -911,6 +911,63 @@ TEST_F(RaftTest, VoteSafety_LogCompleteness) {
       SUCCEED() << "Bug Fixed: Follower became leader.";
   } else {
       FAIL() << "Bug NOT Fixed: Follower failed to become leader.";
+  }
+}
+
+// Joint Consensus Disjoint Cluster Bug
+// Demonstrates that Union Majority allows unsafe commit.
+TEST_F(RaftTest, JointConsensus_DisjointCluster) {
+  // 1. Start Old Cluster {0, 1, 2}
+  LogEntry config_old(ConfigLogEntry(3));
+  StartUp(3, config_old);
+  Ticks(20);
+
+  // 2. Start New Cluster Nodes {3, 4, 5} (initially empty config)
+  LogEntry config_empty;
+  StartUp(3, config_empty);
+
+  // 3. Partition 4 and 5 (Majority of New Cluster)
+  down_.insert("4");
+  down_.insert("5");
+
+  // 4. Propose Config Change {3, 4, 5} on Leader of Old Cluster
+  int ileader = -1;
+  if (servers_[0]->leader_ != "") ileader = stoi(servers_[0]->leader_);
+  ASSERT_NE(ileader, -1);
+
+  auto &raft = *servers_[ileader]->raft_.get();
+  LogEntry config_new;
+  config_new.mutable_config()->add_node("3");
+  config_new.mutable_config()->add_node("4");
+  config_new.mutable_config()->add_node("5");
+  raft.Propose(config_new);
+
+  Ticks(20);
+
+  // 5. Check if committed.
+  // Current Implementation:
+  // Union = {0,1,2,3,4,5} (Size 6). Majority > 3 => 4.
+  // Alive = {0, 1, 2} (Old) + {3} (New). Total 4.
+  // 4 >= 4 -> COMMIT.
+
+  // Safe Joint Consensus:
+  // Old Majority (2/3) OK.
+  // New Majority (needs 2/3). Alive {3} is 1. FAIL.
+  // Result -> BLOCK (No Commit).
+
+  bool committed = false;
+  // Check leader's commits
+  for(auto &c : servers_[ileader]->commits_) {
+      if (c->has_config() && c->config().node_size() == 3 && c->config().node(0) == "3") {
+          committed = true;
+          break;
+      }
+  }
+
+  if (!committed) {
+      SUCCEED() << "Safe Behavior Verified: Joint Consensus correctly blocked unsafe commit.";
+  } else {
+      FAIL() << "Unsafe Behavior: Config change committed despite Partition!";
   }
 }
 

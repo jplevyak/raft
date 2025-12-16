@@ -245,19 +245,33 @@ private:
         Vote();
       }
     } else if (vote_ == node_ && node_ == n->vote) {
-      int votes = 0;
-      for (auto &o : other_config_nodes_) {
-        auto &s = node_state_[o];
-        if (s.term == term_ && s.vote == node_)
-          votes++;
-      }
-      if (votes + 1 > (other_config_nodes_.size() + 1) / 2) {
+      bool old_majority = HasMajority(other_nodes_, i_am_in_old_);
+      bool new_majority = true;
+      if (pending_config_.has_term())
+        new_majority = HasMajority(other_new_nodes_, i_am_in_new_);
+
+      if (old_majority && new_majority) {
         leader_ = node_;
         WriteInternalLogEntry();
         server_->LeaderChange(this, leader_);
         HeartBeat(); // Inform the others.
       }
     }
+  }
+
+  bool HasMajority(const ::std::set< ::std::string> &other, bool include_self) {
+    int votes = 0;
+    if (include_self) votes++;
+    for (auto &o : other) {
+      auto &s = node_state_[o];
+      if (s.term == term_ && s.vote == node_)
+        votes++;
+    }
+    // Size = other.size() + (include_self ? 1 : 0);
+    // Majority = (Size / 2) + 1;
+    // votes >= Majority
+    int size = other.size() + (include_self ? 1 : 0);
+    return votes > size / 2;
   }
 
   void Ack(bool ack) {
@@ -363,7 +377,7 @@ private:
       if (!in_recovery && i_am_leader()) {
         if (!other_nodes_.size())
           data_committed_ = index_;
-        if (!other_config_nodes_.size())
+        if (!other_nodes_.size() && !other_new_nodes_.size())
           config_committed_ = index_;
       }
       entry->set_data_committed(data_committed_);
@@ -375,34 +389,50 @@ private:
     return true;
   }
 
-  int MajorityIndex(const ::std::set< ::std::string> &other) {
-    ::std::vector<int64_t> indices(1, index_);
+  int MajorityIndex(const ::std::set< ::std::string> &other, bool include_self) {
+    ::std::vector<int64_t> indices;
+    if (include_self)
+      indices.push_back(index_);
     for (auto &o : other)
       indices.push_back(node_state_[o].last_log_index);
     sort(indices.begin(), indices.end());
+    if (indices.empty()) {
+        // fprintf(stderr, "MajorityIndex returning 0 (empty)\n");
+        return 0;
+    }
     return indices[(indices.size() - 1) / 2];
   }
 
   void UpdateCommitted() {
-    int i = MajorityIndex(other_nodes_);
+    // fprintf(stderr, "Node %s UpdateCommitted.\n", node_.c_str());
+    int i = MajorityIndex(other_nodes_, i_am_in_old_);
     if (i > data_committed_) {
-      data_committed_ = i;
-      WriteInternalLogEntry();
-      Commit(false);
-      HeartBeat();
+      if (pending_config_.has_term()) {
+          // Joint Consensus: Need majority of Old AND New.
+          int ci = MajorityIndex(other_new_nodes_, i_am_in_new_);
+          if (ci < i) i = ci;
+      }
+      // If no pending config, i is sufficient.
+
+      if (i > data_committed_) {
+          data_committed_ = i;
+          WriteInternalLogEntry();
+          Commit(false);
+          HeartBeat();
+      }
     }
     if (pending_config_.has_term()) { // If a pending configuration change.
-      int ci = MajorityIndex(other_config_nodes_);
-      // config_committed must be <= data_committed, so the new
-      // configuration must also concur with the new data_committed.
-      if (ci > i)
-        ci = i;
+      // Commit config if replicated to Old AND New.
+      int ci_old = MajorityIndex(other_nodes_, i_am_in_old_);
+      int ci_new = MajorityIndex(other_new_nodes_, i_am_in_new_);
+      int ci = std::min(ci_old, ci_new);
+
       if (ci > config_committed_) {
         config_committed_ = ci;
         WriteInternalLogEntry();
         Commit(false);
         HeartBeat();
-        if (!i_am_leader() && other_nodes_.size() > 1)
+        if (!i_am_in_old_ && !i_am_in_new_)
           Abdicate();
       }
     }
@@ -440,27 +470,31 @@ private:
 
   bool ConfigChanged() { // Returns: true if the leader_ changed.
     other_nodes_.clear();
-    other_config_nodes_.clear();
+    other_new_nodes_.clear();
     replicas_.clear();
     for (auto &n : config_.node())
-      if (n != node_) {
+      if (n != node_)
         other_nodes_.insert(n);
-        other_config_nodes_.insert(n);
-      }
     for (auto &n : pending_config_.node())
       if (n != node_)
-        other_config_nodes_.insert(n);
+        other_new_nodes_.insert(n);
+
     replicas_.insert(config_.replica().begin(), config_.replica().end());
     replicas_.insert(pending_config_.replica().begin(), pending_config_.replica().end());
     replicas_.insert(other_nodes_.begin(), other_nodes_.end());
-    replicas_.insert(other_config_nodes_.begin(), other_config_nodes_.end());
+    replicas_.insert(other_new_nodes_.begin(), other_new_nodes_.end());
+
+    i_am_in_old_ = IsInConfig(config_);
+    i_am_in_new_ = IsInConfig(pending_config_);
+
     ::std::string old_leader = leader_;
-    if (!other_nodes_.size())
-      leader_ = node_;
-    else if (!i_am_in_nodes() && other_nodes_.size() == 1)
+    if (!other_nodes_.size() && !other_new_nodes_.size()) // Single node cluster?
+       leader_ = node_;
+    else if (!i_am_in_old_ && other_nodes_.size() == 1) // Leaving?
       leader_ = *other_nodes_.begin();
-    else if (leader_ == node_ && !i_am_in_nodes())
+    else if (leader_ == node_ && !i_am_in_old_ && !i_am_in_new_)
       leader_ = "";
+
     return leader_ != old_leader;
   }
 
@@ -521,8 +555,13 @@ private:
     return node_ == leader_;
   }
   bool i_am_in_nodes() {
-    auto &n = config_.node();
-    return std::find(n.begin(), n.end(), node_) != n.end();
+    return i_am_in_old_;
+  }
+  bool IsInConfig(const Config &c) {
+    for (auto &n : c.node())
+      if (n == node_)
+        return true;
+    return false;
   }
 
   Server *const server_;
@@ -547,9 +586,11 @@ private:
   ::std::deque<std::unique_ptr<LogEntry> > waiting_commits_;
   bool seen_term_ = true;
   // Cached values.
-  ::std::set< ::std::string> other_nodes_;        // Nodes required for consensus on log entries.
-  ::std::set< ::std::string> other_config_nodes_; // Nodes required for config changes.
+  ::std::set< ::std::string> other_nodes_;        // Old Config nodes (excluding self).
+  ::std::set< ::std::string> other_new_nodes_;    // New Config nodes (excluding self).
   ::std::set< ::std::string> replicas_;           // All nodes receiving the replication stream.
+  bool i_am_in_old_ = false;
+  bool i_am_in_new_ = false;
 };
 
 template <typename Server>
