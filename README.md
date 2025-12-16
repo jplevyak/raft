@@ -8,7 +8,28 @@ This is a C++ implementation of the Raft consensus algorithm, designed for robus
 - **Log Replication**: Reliable replication of state machine commands to followers.
 - **Snapshotting**: Support for log compaction via snapshots.
 - **Configuration Updates**: Safe, arbitrary cluster topology changes (node addition/removal) using **Joint Consensus** (Safety verified).
+- [x] Use Cases <!-- id: 96 -->
 - **Failure Resistance**: Tolerates network partitions, message loss, and node failures.
+
+## Why use this library?
+
+This library is designed for users who need a **minimally opinionated** Raft implementation that can be easily integrated into existing C++ projects.
+
+### 1. Zero External Dependencies (Header-Only) (other than Protobuf)
+- **Problem**: Many Raft libraries force you to use specific build systems, logging frameworks, or heavy dependencies (like Boost or gRPC).
+- **Solution**: This library works out-of-the-box with any C++17 compiler. Just include `raft.h` and link `protobuf`.
+
+### 2. Unopinionated I/O and Networking
+- **Problem**: Most libraries couple the consensus logic with a specific network transport (e.g., TCP only) or event loop.
+- **Solution**: You provide the networking. Whether you use raw TCP sockets, RDMA, shared memory, or a custom messaging bus, you simply implement `SendMessage` and feed incoming messages to `Run()`.
+
+### 3. Flexible Storage
+- **Problem**: Tying Raft to a specific storage engine (e.g., LevelDB/RocksDB) restricts usage in embedded systems or specialized environments.
+- **Solution**: You implement the persistent storage interface (`WriteLogEntry`, `GetLogEntry`). You can use a simple append-only file, a high-performance database, or even NVRAM tokens.
+
+### 4. Policy Agnostic
+- **Problem**: Some implementations dictate how cluster membership changes are managed or how snapshots are taken.
+- **Solution**: We provide the mechanisms (Joint Consensus, Snapshot API) but leave the policy (when to snapshot, who manages config changes) to your higher-level application logic.
 
 ## Building and Testing
 
