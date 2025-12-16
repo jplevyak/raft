@@ -23,9 +23,10 @@
 #include <utility>
 #include <vector>
 
+#include "gtest/gtest.h"
+
 #include "raft.pb.h"
 #include "raft_impl.h"
-#include "gtest/gtest.h"
 
 using ::std::deque;
 using ::std::map;
@@ -38,20 +39,17 @@ using ::std::to_string;
 
 const int kMaxServers = 10;
 
-namespace raft
-{
+namespace raft {
 class RaftTest;
 
-class RaftServer : public RaftServerInterface
-{
+class RaftServer : public RaftServerInterface {
 public:
   typedef RaftMessagePb Message;
   typedef RaftLogEntryPb LogEntry;
   typedef RaftConfigPb Config;
   typedef Raft<RaftServer> RaftClass;
 
-  RaftServer(const string node, RaftTest *test)
-  {
+  RaftServer(const string node, RaftTest *test) {
     node_ = node;
     test_ = test;
     raft_.reset(NewRaft(this, node));
@@ -59,9 +57,7 @@ public:
 
   bool SendMessage(RaftClass *raft, const string &node, const Message &message);
 
-  void
-  GetLogEntry(RaftClass *raft, int64_t term, int64_t start, int64_t end, LogEntry *entry)
-  {
+  void GetLogEntry(RaftClass *raft, int64_t term, int64_t start, int64_t end, LogEntry *entry) {
     if (use_commit_log_) {
       for (auto &e : commits_) {
         if (e->term() < term)
@@ -84,15 +80,11 @@ public:
     entry->Clear();
   }
 
-  void
-  WriteLogEntry(RaftClass *raft, const LogEntry &entry)
-  {
+  void WriteLogEntry(RaftClass *raft, const LogEntry &entry) {
     log_.emplace_back(new LogEntry(entry));
   }
 
-  void
-  CommitLogEntry(RaftClass *raft, const LogEntry &entry)
-  {
+  void CommitLogEntry(RaftClass *raft, const LogEntry &entry) {
     commits_.emplace_back(new LogEntry(entry));
     string s = entry.data();
     auto p = s.find("=");
@@ -100,15 +92,11 @@ public:
       state_[s.substr(0, p)] = make_pair(entry.index(), s.substr(p + 1));
   }
 
-  void
-  LeaderChange(RaftClass *raft, const string &leader)
-  {
+  void LeaderChange(RaftClass *raft, const string &leader) {
     leader_ = leader;
   }
 
-  void
-  ConfigChange(RaftClass *raft, const Config &config)
-  {
+  void ConfigChange(RaftClass *raft, const Config &config) {
     config_.reset(new Config(config));
   }
 
@@ -124,30 +112,23 @@ public:
 };
 
 template <typename T>
-bool
-firstless(const T &a, const T &b)
-{
+bool firstless(const T &a, const T &b) {
   return a.first < b.first;
 }
 
-class RaftTest : public ::testing::Test
-{
+class RaftTest : public ::testing::Test {
 public:
   typedef RaftServer::Message Message;
   typedef RaftServer::LogEntry LogEntry;
   typedef RaftServer::Config Config;
 
-  void
-  SendMessage(const string &from, const string &to, const Message &message)
-  {
+  void SendMessage(const string &from, const string &to, const Message &message) {
     if (down_.count(from) || down_.count(to))
       return;
     messages_.emplace_back(make_pair(to, new Message(message)));
   }
 
-  void
-  ForwardMessages()
-  {
+  void ForwardMessages() {
     while (!messages_.empty()) {
       auto &p = messages_.front();
       for (auto &s : servers_)
@@ -160,17 +141,14 @@ public:
 
 protected:
   RaftTest() : now_(0) {}
-  virtual ~RaftTest()
-  {
+  virtual ~RaftTest() {
     for (auto &p : messages_)
       delete p.second;
   }
 
   // 20 ticks gives 2 full election timeouts because the timeouts are random
   // on any given node and very from [1, 2) timeouts.
-  void
-  Ticks(int n)
-  {
+  void Ticks(int n) {
     for (int i = 0; i < n; i++) {
       now_ += 0.1;
       for (auto &s : servers_) {
@@ -180,9 +158,7 @@ protected:
     }
   }
 
-  void
-  StartUp(int n, const LogEntry &config_log_entry)
-  {
+  void StartUp(int n, const LogEntry &config_log_entry) {
     int offset = servers_.size();
     for (int i = offset; i < n + offset; i++) {
       servers_.emplace_back(new RaftServer(to_string(i), this));
@@ -192,9 +168,7 @@ protected:
     }
   }
 
-  void
-  CrashAndRecover(int i, const LogEntry &config_log_entry)
-  {
+  void CrashAndRecover(int i, const LogEntry &config_log_entry) {
     vector<unique_ptr<LogEntry> > log;
     for (auto &p : servers_[i]->log_)
       log.emplace_back(p.release());
@@ -208,18 +182,14 @@ protected:
     raft.Start(now_, i);
   }
 
-  void
-  CrashAndBurn(int i, const LogEntry &config_log_entry)
-  {
+  void CrashAndBurn(int i, const LogEntry &config_log_entry) {
     servers_[i].reset(new RaftServer(to_string(i), this));
     auto &raft = *servers_[i]->raft_.get();
     raft.Recover(config_log_entry);
     raft.Start(now_, i);
   }
 
-  void
-  SnapshotCrashAndRecover(int i, const LogEntry &config_log_entry)
-  {
+  void SnapshotCrashAndRecover(int i, const LogEntry &config_log_entry) {
     vector<LogEntry> entries;
     vector<pair<int64_t, string> > state;
     for (auto &p : servers_[i]->state_)
@@ -240,9 +210,7 @@ protected:
     CrashAndRecover(i, config_log_entry);
   }
 
-  LogEntry
-  ConfigLogEntry(int n)
-  {
+  LogEntry ConfigLogEntry(int n) {
     LogEntry config_log_entry;
     for (int i = 0; i < n; i++)
       config_log_entry.mutable_config()->add_node(to_string(i));
@@ -255,15 +223,12 @@ protected:
   deque<pair<string, Message *> > messages_;
 };
 
-bool
-RaftServer::SendMessage(RaftClass *raft, const string &node, const Message &message)
-{
+bool RaftServer::SendMessage(RaftClass *raft, const string &node, const Message &message) {
   test_->SendMessage(node_, node, message);
   return true;
 }
 
-TEST_F(RaftTest, OneEmptyConfig)
-{
+TEST_F(RaftTest, OneEmptyConfig) {
   servers_.emplace_back(new RaftServer("0", this));
   auto &raft = *servers_[0]->raft_.get();
   raft.Start(0, 0);
@@ -271,8 +236,7 @@ TEST_F(RaftTest, OneEmptyConfig)
   EXPECT_EQ(servers_[0]->leader_, "0");
 }
 
-TEST_F(RaftTest, One)
-{
+TEST_F(RaftTest, One) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   StartUp(1, config_log_entry);
@@ -280,8 +244,7 @@ TEST_F(RaftTest, One)
   EXPECT_EQ(servers_[0]->leader_, "0");
 }
 
-TEST_F(RaftTest, OneTwoNotParticipating)
-{
+TEST_F(RaftTest, OneTwoNotParticipating) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   // Startup server 0 as leader.
@@ -294,8 +257,7 @@ TEST_F(RaftTest, OneTwoNotParticipating)
   EXPECT_EQ(servers_[1]->leader_, "0");
 }
 
-TEST_F(RaftTest, OneTwo)
-{
+TEST_F(RaftTest, OneTwo) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   // Startup server 0 as leader.
@@ -319,8 +281,7 @@ TEST_F(RaftTest, OneTwo)
   EXPECT_EQ(servers_[1]->commits_.size(), 1);
 }
 
-TEST_F(RaftTest, OneTwoSwitchToTwo)
-{
+TEST_F(RaftTest, OneTwoSwitchToTwo) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   // Startup servers 0, and 1 with 0 as leader.
@@ -349,8 +310,7 @@ TEST_F(RaftTest, OneTwoSwitchToTwo)
   EXPECT_EQ(servers_[1]->leader_, "1");
 }
 
-TEST_F(RaftTest, OneThenTwo)
-{
+TEST_F(RaftTest, OneThenTwo) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   // Startup servers 0 and 1, with 0 as leader.
@@ -369,8 +329,7 @@ TEST_F(RaftTest, OneThenTwo)
   EXPECT_EQ(servers_[1]->leader_, "1");
 }
 
-TEST_F(RaftTest, OneAndTwo)
-{
+TEST_F(RaftTest, OneAndTwo) {
   LogEntry config_log_entry(ConfigLogEntry(2));
   // Startup servers 0, and 1 in nodes.
   StartUp(2, config_log_entry);
@@ -379,8 +338,7 @@ TEST_F(RaftTest, OneAndTwo)
   EXPECT_EQ(servers_[1]->leader_, servers_[0]->leader_);
 }
 
-TEST_F(RaftTest, OneAndTwoAndThree)
-{
+TEST_F(RaftTest, OneAndTwoAndThree) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   // Startup servers 0, 1 and 2 in nodes.
   StartUp(3, config_log_entry);
@@ -390,8 +348,7 @@ TEST_F(RaftTest, OneAndTwoAndThree)
   EXPECT_EQ(servers_[2]->leader_, servers_[0]->leader_);
 }
 
-TEST_F(RaftTest, OneAndTwoNotThree)
-{
+TEST_F(RaftTest, OneAndTwoNotThree) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   // Startup servers 0, 1 with config [0, 1, 2].
   StartUp(2, config_log_entry);
@@ -400,8 +357,7 @@ TEST_F(RaftTest, OneAndTwoNotThree)
   EXPECT_EQ(servers_[1]->leader_, servers_[0]->leader_);
 }
 
-TEST_F(RaftTest, OneAndTwoThenTwoAndThree)
-{
+TEST_F(RaftTest, OneAndTwoThenTwoAndThree) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   // Startup servers 0, 1 with config [0, 1, 2].
   StartUp(2, config_log_entry);
@@ -416,8 +372,7 @@ TEST_F(RaftTest, OneAndTwoThenTwoAndThree)
   EXPECT_EQ(servers_[2]->leader_, servers_[1]->leader_);
 }
 
-TEST_F(RaftTest, OneTwoThreeThenAbdicate)
-{
+TEST_F(RaftTest, OneTwoThreeThenAbdicate) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   // Startup servers 0, 1, 2 with config [0, 1, 2].
   StartUp(3, config_log_entry);
@@ -431,8 +386,7 @@ TEST_F(RaftTest, OneTwoThreeThenAbdicate)
   EXPECT_EQ(servers_[(ileader + 1) % 3]->leader_, servers_[(ileader + 2) % 3]->leader_);
 }
 
-TEST_F(RaftTest, OneTwoThreeThenAllSeparate)
-{
+TEST_F(RaftTest, OneTwoThreeThenAllSeparate) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   // Startup servers 0, 1, 2 with config [0, 1, 2].
   StartUp(3, config_log_entry);
@@ -446,8 +400,7 @@ TEST_F(RaftTest, OneTwoThreeThenAllSeparate)
   EXPECT_EQ(servers_[2]->leader_, "");
 }
 
-TEST_F(RaftTest, OneTwoThreeThenAllSeparateThenTogether)
-{
+TEST_F(RaftTest, OneTwoThreeThenAllSeparateThenTogether) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   // Startup servers 0, 1, 2 with config [0, 1, 2].
   StartUp(3, config_log_entry);
@@ -463,8 +416,7 @@ TEST_F(RaftTest, OneTwoThreeThenAllSeparateThenTogether)
   EXPECT_EQ(servers_[2]->leader_, servers_[0]->leader_);
 }
 
-TEST_F(RaftTest, OneLog)
-{
+TEST_F(RaftTest, OneLog) {
   LogEntry config_log_entry;
   StartUp(1, config_log_entry);
   auto &raft = *servers_[0]->raft_.get();
@@ -477,8 +429,7 @@ TEST_F(RaftTest, OneLog)
   EXPECT_EQ(servers_[0]->commits_[0]->data(), "a");
 }
 
-TEST_F(RaftTest, OneLogLog)
-{
+TEST_F(RaftTest, OneLogLog) {
   LogEntry config_log_entry;
   StartUp(1, config_log_entry);
   auto &raft = *servers_[0]->raft_.get();
@@ -495,8 +446,7 @@ TEST_F(RaftTest, OneLogLog)
   EXPECT_EQ(servers_[0]->commits_[1]->data(), "b");
 }
 
-TEST_F(RaftTest, OneTwoLogLog)
-{
+TEST_F(RaftTest, OneTwoLogLog) {
   LogEntry config_log_entry(ConfigLogEntry(2));
   StartUp(2, config_log_entry);
   Ticks(20);
@@ -526,8 +476,7 @@ TEST_F(RaftTest, OneTwoLogLog)
   EXPECT_EQ(servers_[iother]->commits_[1]->data(), "b");
 }
 
-TEST_F(RaftTest, OneTwoThreeLogDownLogUp)
-{
+TEST_F(RaftTest, OneTwoThreeLogDownLogUp) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   StartUp(3, config_log_entry);
   Ticks(20);
@@ -555,8 +504,7 @@ TEST_F(RaftTest, OneTwoThreeLogDownLogUp)
   }
 }
 
-TEST_F(RaftTest, OneTwoThreeLogLogThreeDamagedLogRestore)
-{
+TEST_F(RaftTest, OneTwoThreeLogLogThreeDamagedLogRestore) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   StartUp(3, config_log_entry);
   Ticks(20);
@@ -581,8 +529,7 @@ TEST_F(RaftTest, OneTwoThreeLogLogThreeDamagedLogRestore)
   }
 }
 
-TEST_F(RaftTest, OneTwoLogLogThenThree)
-{
+TEST_F(RaftTest, OneTwoLogLogThenThree) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   config_log_entry.mutable_config()->add_node("1");
@@ -611,8 +558,7 @@ TEST_F(RaftTest, OneTwoLogLogThenThree)
   EXPECT_EQ(servers_[2]->commits_[2]->config().node_size(), 3);
 }
 
-TEST_F(RaftTest, OneRecover)
-{
+TEST_F(RaftTest, OneRecover) {
   LogEntry config_log_entry;
   StartUp(1, config_log_entry);
   {
@@ -627,8 +573,7 @@ TEST_F(RaftTest, OneRecover)
   EXPECT_EQ(servers_[0]->commits_[0]->data(), "a");
 }
 
-TEST_F(RaftTest, OneTwoThreeCrashAndBurnLeader)
-{
+TEST_F(RaftTest, OneTwoThreeCrashAndBurnLeader) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   config_log_entry.mutable_config()->add_node("1");
@@ -656,8 +601,7 @@ TEST_F(RaftTest, OneTwoThreeCrashAndBurnLeader)
   }
 }
 
-TEST_F(RaftTest, FiveCrashLeaderAndAnotherAndRecover)
-{
+TEST_F(RaftTest, FiveCrashLeaderAndAnotherAndRecover) {
   LogEntry config_log_entry(ConfigLogEntry(5));
   StartUp(5, config_log_entry);
   Ticks(20);
@@ -684,8 +628,7 @@ TEST_F(RaftTest, FiveCrashLeaderAndAnotherAndRecover)
   EXPECT_EQ(servers_[(ileader + 1) % 5]->commits_[1]->data(), "b");
 }
 
-TEST_F(RaftTest, FiveCrashAndBurnLeaderAndAnother)
-{
+TEST_F(RaftTest, FiveCrashAndBurnLeaderAndAnother) {
   LogEntry config_log_entry(ConfigLogEntry(5));
   StartUp(5, config_log_entry);
   Ticks(20);
@@ -711,8 +654,7 @@ TEST_F(RaftTest, FiveCrashAndBurnLeaderAndAnother)
 
 // Test that a log from a leader without quorum never is committed and that a
 // log with the same index from a leader with quorum is.
-TEST_F(RaftTest, FiveLogDown3LogDown2Up3LogUp2)
-{
+TEST_F(RaftTest, FiveLogDown3LogDown2Up3LogUp2) {
   LogEntry config_log_entry(ConfigLogEntry(5));
   StartUp(5, config_log_entry);
   Ticks(20);
@@ -748,8 +690,7 @@ TEST_F(RaftTest, FiveLogDown3LogDown2Up3LogUp2)
   }
 }
 
-TEST_F(RaftTest, ReplicaFailover)
-{
+TEST_F(RaftTest, ReplicaFailover) {
   LogEntry config_log_entry;
   config_log_entry.mutable_config()->add_node("0");
   config_log_entry.mutable_config()->add_replica("1");
@@ -788,8 +729,7 @@ TEST_F(RaftTest, ReplicaFailover)
   EXPECT_EQ(servers_[1]->leader_, "1");
 }
 
-TEST_F(RaftTest, OneSnapshotTwo)
-{
+TEST_F(RaftTest, OneSnapshotTwo) {
   LogEntry config_log_entry;
   StartUp(1, config_log_entry);
   auto &raft = *servers_[0]->raft_.get();
@@ -813,8 +753,7 @@ TEST_F(RaftTest, OneSnapshotTwo)
   EXPECT_EQ(servers_[0]->state_["b"].second, "3");
 }
 
-TEST_F(RaftTest, OneTwoThreeSnapshotOneTwoCrashAndBurnThree)
-{
+TEST_F(RaftTest, OneTwoThreeSnapshotOneTwoCrashAndBurnThree) {
   LogEntry config_log_entry(ConfigLogEntry(3));
   StartUp(3, config_log_entry);
   Ticks(20);
@@ -839,4 +778,140 @@ TEST_F(RaftTest, OneTwoThreeSnapshotOneTwoCrashAndBurnThree)
   EXPECT_EQ(servers_[2]->state_["a"].second, "1");
   EXPECT_EQ(servers_[2]->state_["b"].second, "3");
 }
+
+// Majority Index Bug
+TEST_F(RaftTest, MajorityIndexBug) {
+  LogEntry config_log_entry(ConfigLogEntry(2)); // Nodes 0, 1
+  StartUp(2, config_log_entry);
+  Ticks(20);
+
+  int ileader = servers_[0]->leader_[0] - '0';
+  int ifollower = ileader ? 0 : 1;
+
+  // Partition the follower so it doesn't get the log
+  down_.insert(to_string(ifollower));
+
+  auto &raft = *servers_[ileader]->raft_.get();
+  LogEntry log_entry;
+  log_entry.set_data("should_not_commit");
+  raft.Propose(log_entry);
+
+  Ticks(20);
+
+  // BUG: The leader will commit this because indices.size()/2 of 2 is 1.
+  // indices will be {0, 1}. indices[1] is the leader's high index.
+  // It commits solely on leader's log.
+
+  // With the fix (floor median), it should NOT commit because size=2, (2-1)/2 = 0.
+  // indices={0, 0}.
+  // It effectively requires majority.
+
+  bool committed = false;
+  if (servers_[ileader]->commits_.size() > 0) {
+      if (servers_[ileader]->commits_.back()->data() == "should_not_commit") {
+          committed = true;
+      }
+  }
+
+  // Assert that the bug is fixed (NOT committed).
+  EXPECT_FALSE(committed) << "Bug fixed: Leader did not commit without majority.";
+}
+
+// Vote Persistence Bug
+TEST_F(RaftTest, VotePersistenceBug) {
+  LogEntry config_log_entry(ConfigLogEntry(3));
+  StartUp(3, config_log_entry);
+  Ticks(20);
+
+  int ifollower = -1;
+  for(int i=0; i<3; i++) {
+      if (servers_[i]->leader_ != to_string(i)) {
+          ifollower = i;
+          break;
+      }
+  }
+  ASSERT_NE(ifollower, -1);
+
+  // Get current vote
+  auto impl = static_cast<RaftImpl<RaftServer>*>(servers_[ifollower]->raft_.get());
+  string vote_before = impl->GetVote();
+  EXPECT_NE(vote_before, "") << "Follower should have voted";
+  int64_t term_before = impl->GetTerm();
+
+  CrashAndRecover(ifollower, config_log_entry);
+
+  auto impl_after = static_cast<RaftImpl<RaftServer>*>(servers_[ifollower]->raft_.get());
+  string vote_after = impl_after->GetVote();
+  int64_t term_after = impl_after->GetTerm();
+
+  // BUG FIXED: Vote should be restored.
+  // If term is same, vote should be preserved.
+  if (term_after == term_before) {
+      EXPECT_EQ(vote_after, vote_before) << "Bug fixed: Vote WAS preserved.";
+  }
+}
+
+// 4. Vote Safety (Log Completeness) Bug
+TEST_F(RaftTest, VoteSafety_LogCompleteness) {
+  LogEntry config_log_entry(ConfigLogEntry(2));
+  StartUp(2, config_log_entry);
+  Ticks(20);
+
+  // 1. Setup Node 0 with long log (Term 1, Index 10)
+  // 1. Identify Leader
+  int ileader = -1;
+  if (servers_[0]->leader_ != "") ileader = stoi(servers_[0]->leader_);
+  ASSERT_NE(ileader, -1);
+  int ifollower = ileader ? 0 : 1;
+
+  // Isolate follower.
+  down_.insert(to_string(ifollower));
+
+  // Leader writes entries.
+  auto &raft_leader = *servers_[ileader]->raft_.get();
+  LogEntry entry;
+  for(int i=0; i<10; i++) {
+     entry.set_data("old" + to_string(i));
+     raft_leader.Propose(entry);
+  }
+  Ticks(5);
+  int64_t last_log_term_leader = servers_[ileader]->log_.back()->term();
+  int64_t last_log_index_leader = servers_[ileader]->log_.back()->index();
+
+  // Leader should have high index, old term.
+
+  // Prepare Follower.
+  down_.clear();
+  down_.insert(to_string(ileader));
+
+  // Clear Follower log.
+  servers_[ifollower]->log_.clear();
+  // Add Config
+  servers_[ifollower]->log_.emplace_back(new LogEntry(config_log_entry));
+  LogEntry *e = new LogEntry;
+  e->set_term(2);
+  e->set_index(1);
+  e->set_previous_log_term(-1);
+  e->set_previous_log_index(0);
+  e->set_data("new_term_data");
+  servers_[ifollower]->log_.emplace_back(e);
+
+  // Restart Follower
+  CrashAndRecover(ifollower, config_log_entry);
+
+  // Reconnect.
+  down_.clear();
+
+  Ticks(20);
+
+  // Check if Follower became leader.
+  bool follower_is_leader = (servers_[ifollower]->leader_ == to_string(ifollower));
+
+  if (follower_is_leader) {
+      SUCCEED() << "Bug Fixed: Follower became leader.";
+  } else {
+      FAIL() << "Bug NOT Fixed: Follower failed to become leader.";
+  }
+}
+
 } // namespace raft

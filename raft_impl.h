@@ -25,10 +25,9 @@
 
 #include "raft.h"
 
-namespace raft
-{
-template <typename Server> class RaftImpl : public Raft<Server>
-{
+namespace raft {
+template <typename Server> class RaftImpl : public Raft<Server> {
+  friend class RaftTest;
 public:
   typedef typename Server::Message Message;
   typedef typename Server::LogEntry LogEntry;
@@ -41,10 +40,15 @@ public:
     election_timeout_ = timeout;
   }
 
+  const ::std::string& GetVote() const { return vote_; }
+  int64_t GetTerm() const { return term_; }
+
   virtual void Recover(const LogEntry &e) {
     if (!e.has_term()) {   // LogEntry from server.
       if (e.has_index()) { // Summary log entry.
         ProcessLogEntry(e, true);
+        if (e.has_vote())
+          vote_ = e.vote();
         Commit(true);
       } else if (e.has_config()) {
         config_.CopyFrom(e.config());
@@ -58,6 +62,8 @@ public:
       if (e.has_data_committed())
         data_committed_ = e.data_committed();
       ProcessLogEntry(e, true);
+      if (e.has_vote())
+        vote_ = e.vote();
       Commit(true);
     }
   }
@@ -70,7 +76,7 @@ public:
     random_election_delay_ = election_timeout_ * r;
     if (ConfigChanged())
       NewTerm(term_ + 1, leader_, true);
-    else
+    else if (vote_.empty())
       vote_ = node_; // Conservatively assume we called a vote for ourself.
     server_->ConfigChange(this, config_);
     server_->LeaderChange(this, leader_);
@@ -231,7 +237,8 @@ private:
     if (vote_.empty()) {       // I have not voted yet.
       if (m.vote() == node_) { // Abdication.
         VoteForMe();
-      } else if (m.last_log_term() >= last_log_term_ && m.last_log_index() >= index_) {
+      } else if (m.last_log_term() > last_log_term_ ||
+                 (m.last_log_term() == last_log_term_ && m.last_log_index() >= index_)) {
         // Vote for candidate if it is at least as up to date as we are.
         vote_ = m.vote();
         WriteInternalLogEntry();
@@ -373,7 +380,7 @@ private:
     for (auto &o : other)
       indices.push_back(node_state_[o].last_log_index);
     sort(indices.begin(), indices.end());
-    return indices[indices.size() / 2];
+    return indices[(indices.size() - 1) / 2];
   }
 
   void UpdateCommitted() {
@@ -388,7 +395,9 @@ private:
       int ci = MajorityIndex(other_config_nodes_);
       // config_committed must be <= data_committed, so the new
       // configuration must also concur with the new data_committed.
-      if (i == ci && ci > config_committed_) {
+      if (ci > i)
+        ci = i;
+      if (ci > config_committed_) {
         config_committed_ = ci;
         WriteInternalLogEntry();
         Commit(false);
