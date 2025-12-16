@@ -27,6 +27,26 @@ make test
 ```
 This runs all 31+ regression tests covering leader election, log replication, and complex configuration changes.
 
+### Example Server (KV Store)
+An example Key-Value store server using `liburing` for efficient I/O is provided in `example_server.cc`.
+
+**Requirements**:
+- `liburing` (Install via `sudo apt install liburing-dev`)
+
+**Build**:
+```bash
+make example_server
+```
+
+**Run**:
+```bash
+# Node 1
+./example_server 1 5001 127.0.0.1:5002 127.0.0.1:5003
+
+# Node 2
+./example_server 2 5002 127.0.0.1:5001 127.0.0.1:5003
+```
+
 ## Getting Started
 
 ### Prerequisites

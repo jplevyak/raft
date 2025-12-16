@@ -106,6 +106,9 @@ clean:
 %_test: raft.pb.o %_test.cc
 	$(CXX) -o $@ $*_test.cc $(CXXFLAGS) raft.pb.o $(LIBS)
 
+example_server: raft.pb.o example_server.cc
+	$(CXX) -o $@ example_server.cc $(CXXFLAGS) raft.pb.o $(LIBS)
+
 %.pb.cc %.pb.h %_pb2.py: %.proto
 	$(PROTOC) $^ --cpp_out=. --python_out=.
 
