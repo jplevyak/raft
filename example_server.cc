@@ -632,8 +632,6 @@ int main(int argc, char **argv) {
 
   // Bootstrap
   raft::RaftLogEntryPb config_entry;
-  // config_entry.set_term(1);
-  // config_entry.set_index(1);
   *config_entry.mutable_config() = initial_config;
 
   raft->Recover(config_entry);
