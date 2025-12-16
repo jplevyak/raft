@@ -12,138 +12,108 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#OPTIMIZE=1
-DEBUG=1
-#PROFILE=1
-PREFIX=/usr/local
-OUT_DIR=.
-
-# Use default if no configuration specified.
+# Configuration
+DEBUG ?= 1
 CXX ?= g++
-#CXX = clang
 AR ?= ar
+PROTOC ?= protoc
+OUT_DIR = .
 
-PROTOC = protoc
-PYTHONPATH := .:$(PATHONPATH)
+# Platform Detection
+OS_TYPE := $(shell uname -s)
+ARCH := $(shell uname -m)
 
-.PHONY: all depend install
-
-ifdef OPTIMIZE
-CXXFLAGS += -O3
-endif
-ifdef DEBUG
-CXXFLAGS += -ggdb
-endif
-ifdef PROFILE
-CXXFLAGS += -O3 -g
-endif
-
-OS_TYPE = $(shell uname -s | \
-	    awk '{ split($$1,a,"_"); printf("%s", a[1]);  }')
-OS_VERSION = $(shell uname -r | \
-	       awk '{ split($$1,a,"."); sub("V","",a[1]); \
-	         printf("%d%d%d",a[1],a[2],a[3]); }')
-ARCH = $(shell uname -m)
-ifeq ($(ARCH),i386)
-  ARCH = x86
-endif
-ifeq ($(ARCH),i486)
-  ARCH = x86
-endif
-ifeq ($(ARCH),i586)
-  ARCH = x86
-endif
-ifeq ($(ARCH),i686)
+# Adjust ARCH for 32-bit x86 aliases
+ifneq (,$(filter i386 i486 i586 i686,$(ARCH)))
   ARCH = x86
 endif
 
-ifeq ($(ARCH),x86)
-ifneq ($(OS_TYPE),Darwin)
-# Darwin lies
-$(error 64-bit required)
-endif
-endif
-ifeq ($(OS_TYPE),Darwin)
-  ARFLAGS = crvs
-else
-  ARFLAGS = crv
-endif
+# Flags
+CXXFLAGS += -std=c++17 -Wall -Wextra
+CXXFLAGS += -I. -I./include -I./util -I./common -I/usr/local/include -I/usr/include
+CXXFLAGS += $(shell pkg-config --cflags-only-I protobuf)
+CXXFLAGS += $(shell pkg-config --cflags gtest)
 
-ifneq ($(OS_TYPE),CYGWIN)
+LIBS += $(shell pkg-config --libs protobuf)
+LIBS += $(shell pkg-config --libs gtest) -lgtest -lgtest_main
+
 ifneq ($(OS_TYPE),Darwin)
   LIBS += -lrt -lpthread
 endif
+
+ifdef OPTIMIZE
+  CXXFLAGS += -O3
+endif
+ifdef DEBUG
+  CXXFLAGS += -ggdb
+endif
+ifdef PROFILE
+  CXXFLAGS += -O3 -g
 endif
 
-
-# Function for getting a set of source files.
-get_srcs = $(shell find $(1) -name \*.c -or -name \*.cpp -or -name \*.cc -a ! -name \*_test.cc | tr "\n" " ")
-
+# Source Discovery
 PROTOS = raft
 PROTO_SOURCES = $(addsuffix .pb.cc,$(PROTOS))
 PROTO_INCLUDES = $(addsuffix .pb.h,$(PROTOS))
 PROTO_PYTHON = $(addsuffix _pb2.py,$(PROTOS))
-TEST_SOURCES = $(shell find . -name \*_test.cc)
+TEST_SOURCES = $(shell find . -name '*_test.cc')
 TESTS = $(basename $(TEST_SOURCES))
 SOURCES = $(PROTO_SOURCES) $(TEST_SOURCES)
 
-CXXFLAGS += $(OPT) -no-pie
-CXXFLAGS += -std=c++17
-CXXFLAGS += -I. -I./include -I./util -I./common -I/usr/local/include -I/usr/include
-CXXFLAGS += `pkg-config --cflags-only-I protobuf`
-CXXFLAGS += `pkg-config --cflags gtest`
-
-LIBS += `pkg-config --libs protobuf`
-LIBS += `pkg-config --libs gtest`
-
 source_to_object = $(addsuffix .o,$(basename $(1)))
 source_to_depend = $(addsuffix .d,$(basename $(1)))
+
+.PHONY: all depend clean test
 
 default: all
 
 all: $(TESTS)
 
 depend: $(call source_to_depend,$(SOURCES))
-	@echo Building $(call source_to_depend,$(SOURCES))
+
+# Tests
+# TEST_TMPDIR defaults to a random temp dir if not set by environment
+TEST_TMPDIR ?= $(shell mktemp -d)
 
 test: $(TESTS)
-	for t in $^; \
-		do \
-			echo "***** Running $$t"; \
-			rm -rf $(TEST_TMPDIR); \
-			mkdir $(TEST_TMPDIR); \
-			./$$t --test_tmpdir=$(TEST_TMPDIR) || exit 1; \
-		done; \
-	rm -rf $(TEST_TMPDIR)
-	@echo "All tests pass!"
+	@echo "Running tests in $(TEST_TMPDIR)"
+	@failed=0; \
+	for t in $^; do \
+		echo "***** Running $$t"; \
+		rm -rf $(TEST_TMPDIR)/*; \
+		if ! ./$$t --test_tmpdir=$(TEST_TMPDIR); then \
+			failed=1; \
+		fi; \
+	done; \
+	rm -rf $(TEST_TMPDIR); \
+	if [ $$failed -eq 1 ]; then \
+		echo "Tests FAILED"; \
+		exit 1; \
+	else \
+		echo "All tests pass!"; \
+	fi
 
 clean:
-	-rm -f `find . -type f -name '*.pb.*'`
-	-rm -f `find . -type f -name '*_pb2.py'`
-	-rm -f `find . -type f -name '*.o'`
-	-rm -f `find . -type f -name '*.pyc'`
-	-rm -f `find . -type f -name '*.d'`
-	-rm -f $(PROTO_INCLUDES) $(PROTO_SOURCES) $(PROTO_PYTHON)
-	-rm -f $(TESTS)
+	find . -name '*.pb.cc' -delete
+	find . -name '*.pb.h' -delete
+	find . -name '*_pb2.py' -delete
+	find . -name '*.o' -delete
+	find . -name '*.pyc' -delete
+	find . -name '*.d' -delete
+	rm -f $(TESTS)
 
+# Rules
 %_test: raft.pb.o %_test.cc
-	$(CXX) -o $@ $*_test.cc $(CXXFLAGS) raft.pb.o $(LIBS) -lgtest -lgtest_main
+	$(CXX) -o $@ $*_test.cc $(CXXFLAGS) raft.pb.o $(LIBS)
 
 %.pb.cc %.pb.h %_pb2.py: %.proto
 	$(PROTOC) $^ --cpp_out=. --python_out=.
 
-%.o: %.cc $(MODULE_INCLUDES) $(CODEGEN_FILES)
-	$(CXX) -c $*.cc -o $(OUT_DIR)/$@ $(CXXFLAGS)
+%.o: %.cc
+	$(CXX) -c $< -o $(OUT_DIR)/$@ $(CXXFLAGS)
 
-%.d: %.cc $(MODULE_INCLUDES) $(CODEGEN_FILES)
-	$(CXX) -MM $*.cc $(CXXFLAGS) > $*.d
-
-%.cc: %.lex
-	flex -o $@ $^
-
-%.cc %.h: %.y
-	bison --output=$*.cc --defines=$*.h $^
-
+%.d: %.cc $(PROTO_INCLUDES)
+	$(CXX) -MM $< $(CXXFLAGS) > $@
 
 ifneq ($(MAKECMDGOALS),clean)
   -include $(call source_to_depend,$(SOURCES))

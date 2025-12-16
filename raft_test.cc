@@ -37,8 +37,6 @@ using ::std::vector;
 using ::std::pair;
 using ::std::to_string;
 
-const int kMaxServers = 10;
-
 namespace raft {
 class RaftTest;
 
@@ -57,7 +55,7 @@ public:
 
   bool SendMessage(RaftClass *raft, const string &node, const Message &message);
 
-  void GetLogEntry(RaftClass *raft, int64_t term, int64_t start, int64_t end, LogEntry *entry) {
+  void GetLogEntry(RaftClass *, int64_t term, int64_t start, int64_t, LogEntry *entry) {
     if (use_commit_log_) {
       for (auto &e : commits_) {
         if (e->term() < term)
@@ -80,11 +78,11 @@ public:
     entry->Clear();
   }
 
-  void WriteLogEntry(RaftClass *raft, const LogEntry &entry) {
+  void WriteLogEntry(RaftClass *, const LogEntry &entry) {
     log_.emplace_back(new LogEntry(entry));
   }
 
-  void CommitLogEntry(RaftClass *raft, const LogEntry &entry) {
+  void CommitLogEntry(RaftClass *, const LogEntry &entry) {
     commits_.emplace_back(new LogEntry(entry));
     string s = entry.data();
     auto p = s.find("=");
@@ -92,11 +90,11 @@ public:
       state_[s.substr(0, p)] = make_pair(entry.index(), s.substr(p + 1));
   }
 
-  void LeaderChange(RaftClass *raft, const string &leader) {
+  void LeaderChange(RaftClass *, const string &leader) {
     leader_ = leader;
   }
 
-  void ConfigChange(RaftClass *raft, const Config &config) {
+  void ConfigChange(RaftClass *, const Config &config) {
     config_.reset(new Config(config));
   }
 
@@ -223,7 +221,7 @@ protected:
   deque<pair<string, Message *> > messages_;
 };
 
-bool RaftServer::SendMessage(RaftClass *raft, const string &node, const Message &message) {
+bool RaftServer::SendMessage(RaftClass *, const string &node, const Message &message) {
   test_->SendMessage(node_, node, message);
   return true;
 }
@@ -875,8 +873,6 @@ TEST_F(RaftTest, VoteSafety_LogCompleteness) {
      raft_leader.Propose(entry);
   }
   Ticks(5);
-  int64_t last_log_term_leader = servers_[ileader]->log_.back()->term();
-  int64_t last_log_index_leader = servers_[ileader]->log_.back()->index();
 
   // Leader should have high index, old term.
 
