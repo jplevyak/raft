@@ -52,33 +52,44 @@ def run_test():
     print("Waiting for leader election (5s)...")
     time.sleep(5)
 
-    print("Writing values...")
-    # Try writing to different nodes to verify redirect/forwarding.
-    # The server should forward 'set' requests to the leader via multiplexed peer connection.
-
-    # Try writing to all nodes - forwarding should make this succeed even if not leader
+    leader_port = -1
     for port in CLIENT_PORTS:
-        print(f"Trying set on {port}...")
-        resp = send_command(port, f"set foo{port} bar{port}")
+        print(f"Probing {port}...")
+        resp = send_command(port, f"set probe {port}")
         if resp == "OK":
-            print(f"Set foo{port}=bar{port} on {port} SUCCEEDED (Direct or Forwarded)")
+            print(f"Node {port} is LEADER")
+            leader_port = port
+        elif resp.startswith("NOT_LEADER"):
+            print(f"Node {port} is FOLLOWER (Response: {resp})")
         else:
-            print(f"Failed to set on {port}: {resp}")
-            return 1 # We expect success on all due to forwarding
+            print(f"Node {port} returned unexpected: {resp}")
 
+    if leader_port == -1:
+        print("ERROR: No leader found")
+        for s in servers: s.kill()
+        return 1
 
+    print(f"Writing data to leader {leader_port}...")
+    # Write some data
+    if send_command(leader_port, "set foo bar") != "OK":
+        print("Failed to set foo=bar on leader")
+        for s in servers: s.kill()
+        return 1
+    if send_command(leader_port, "set curtis cool") != "OK":
+        print("Failed to set curtis=cool on leader")
+        for s in servers: s.kill()
+        return 1
 
     time.sleep(1) # Wait for commit
 
     print("Reading values (verification)...")
     success = True
     for port in CLIENT_PORTS:
-        # Verify all writes
-        for write_port in CLIENT_PORTS:
-             val = send_command(port, f"get foo{write_port}")
-             if val != f"bar{write_port}":
-                  print(f"FAILURE: Node {port} missing foo{write_port}")
-                  success = False
+         val1 = send_command(port, "get foo")
+         val2 = send_command(port, "get curtis")
+         if val1 != "bar" or val2 != "cool":
+              print(f"FAILURE: Node {port} missing data (got foo={val1}, curtis={val2})")
+              success = False
 
     if not success:
          for s in servers: s.kill()
@@ -102,12 +113,11 @@ def run_test():
     print("Verifying persistence...")
     success = True
     for port in CLIENT_PORTS:
-        # Verify all writes
-        for write_port in CLIENT_PORTS:
-             val = send_command(port, f"get foo{write_port}")
-             if val != f"bar{write_port}":
-                  print(f"FAILURE: Node {port} missing foo{write_port} (got {val})")
-                  success = False
+         val1 = send_command(port, "get foo")
+         val2 = send_command(port, "get curtis")
+         if val1 != "bar" or val2 != "cool":
+              print(f"FAILURE: Node {port} missing data after restart (got foo={val1}, curtis={val2})")
+              success = False
 
     print("Shutting down...")
     for s in servers:

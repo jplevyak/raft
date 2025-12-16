@@ -28,23 +28,36 @@ make test
 This runs all 31+ regression tests covering leader election, log replication, and complex configuration changes.
 
 ### Example Server (KV Store)
-An example Key-Value store server using `liburing` for efficient I/O is provided in `example_server.cc`.
-
-**Requirements**:
-- `liburing` (Install via `sudo apt install liburing-dev`)
+An example Key-Value store server is provided in `example_server.cc`. It uses standard POSIX I/O for the Write-Ahead Log (WAL) and TCP sockets for communication.
 
 **Build**:
 ```bash
 make example_server
 ```
 
-**Run**:
+**Run Manual Cluster**:
+To run a 3-node cluster manually on localhost:
 ```bash
-# Node 1
-./example_server 1 5001 127.0.0.1:5002 127.0.0.1:5003
+# Terminal 1
+./example_server 5001 5001 127.0.0.1:5002 127.0.0.1:5003
 
-# Node 2
-./example_server 2 5002 127.0.0.1:5001 127.0.0.1:5003
+# Terminal 2
+./example_server 5002 5002 127.0.0.1:5001 127.0.0.1:5003
+
+# Terminal 3
+./example_server 5003 5003 127.0.0.1:5001 127.0.0.1:5002
+```
+
+**Client Interaction**:
+The server listens for client connections on `port + 1000` (e.g., 6001 for node 5001).
+Protocol is simple newline-delimited text:
+- `set key value` -> Returns `OK` or `NOT_LEADER <leader_host:port>`
+- `get key` -> Returns `value` or `NOT_FOUND`
+
+**End-to-End Test**:
+A python script is included to automatically spin up a cluster, perform writes, verify replication, and test persistence across restarts.
+```bash
+python3 test_example_server.py
 ```
 
 ## Getting Started

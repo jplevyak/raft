@@ -74,9 +74,7 @@ public:
 
   bool SendMessage(RaftClass *raft, const string &node, const Message &message) {
     (void)raft;
-    // cout << "SendMessage to " << node << " type=" << message.ShortDebugString() << endl;
     for (auto &p : peers_) {
-      // Simplification: identifying peer by port in node id
       if (to_string(p.port) == node || p.host + ":" + to_string(p.port) == node) {
          if (p.fd == -1) {
            if (!ConnectToPeer(p)) {
@@ -87,7 +85,12 @@ public:
 
          string data;
          if (!message.SerializeToString(&data)) return false;
-         if (!SendTypedMessage(p.fd, MSG_RAFT, data)) {
+         uint32_t len = htonl(data.size());
+         string frame((char*)&len, 4);
+         frame += data;
+
+         ssize_t sent = send(p.fd, frame.data(), frame.size(), MSG_NOSIGNAL);
+         if (sent != (ssize_t)frame.size()) {
              close(p.fd);
              p.fd = -1;
              return false;
@@ -265,24 +268,7 @@ public:
   }
 
 private:
-  static const uint8_t MSG_RAFT = 0;
-  static const uint8_t MSG_FWD_REQ = 1;
-  static const uint8_t MSG_FWD_RESP = 2;
 
-  // Helper to send typed message
-  bool SendTypedMessage(int fd, uint8_t type, const string& payload) {
-      if (fd == -1) return false;
-      uint32_t len = htonl(payload.size() + 1); // +1 for type
-      string frame((char*)&len, 4);
-      frame += (char)type;
-      frame += payload;
-      ssize_t sent = send(fd, frame.data(), frame.size(), MSG_NOSIGNAL);
-      if (sent != (ssize_t)frame.size()) {
-          // perror("send");
-          return false;
-      }
-      return true;
-  }
 
   bool ConnectToPeer(Peer &p) {
       int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -429,73 +415,15 @@ private:
 
           if (buffer.size() < 4 + len) break;
 
-          string payload = buffer.substr(4, len); // Includes type byte
-          buffer = buffer.substr(4 + len);
+          string data = buffer.substr(4, len);
+          buffer.erase(0, 4 + len);
 
-          if (payload.size() < 1) continue; // Should not happen
-          uint8_t type = (uint8_t)payload[0];
-          string data = payload.substr(1);
-
-          if (type == MSG_RAFT) {
-              raft::RaftMessagePb message;
-              if (message.ParseFromString(data)) {
-                  raft_->Run(now, message);
-              }
-          } else if (type == MSG_FWD_REQ) {
-              HandleForwardReq(fd, data);
-          } else if (type == MSG_FWD_RESP) {
-              HandleForwardResp(data);
+          raft::RaftMessagePb message;
+          if (message.ParseFromString(data)) {
+              raft_->Run(now, message);
           }
       }
       return true;
-  }
-
-  void HandleForwardReq(int peer_fd, const string& data) {
-      if (data.size() < 8) return;
-      uint64_t req_id;
-      memcpy(&req_id, data.data(), 8);
-      string cmd = data.substr(8);
-
-      string response;
-      if (leader_ == id_) {
-           if (cmd.rfind("set ", 0) == 0) {
-               size_t space = cmd.find(' ', 4);
-               if (space != string::npos) {
-                   string key = cmd.substr(4, space - 4);
-                   string val = cmd.substr(space + 1);
-                   LogEntry entry;
-                   entry.set_data(key + "=" + val);
-                   raft_->Propose(entry);
-                   response = "OK\n";
-               } else {
-                   response = "ERROR\n";
-               }
-           } else {
-               response = "UNKNOWN\n";
-           }
-      } else {
-          response = "NOT_LEADER " + leader_ + "\n";
-      }
-
-      string payload;
-      payload.resize(8);
-      memcpy(&payload[0], &req_id, 8);
-      payload += response;
-      SendTypedMessage(peer_fd, MSG_FWD_RESP, payload);
-  }
-
-  void HandleForwardResp(const string& data) {
-      if (data.size() < 8) return;
-      uint64_t req_id;
-      memcpy(&req_id, data.data(), 8);
-      string resp = data.substr(8);
-
-      auto it = pending_requests_.find(req_id);
-      if (it != pending_requests_.end()) {
-          int client_fd = it->second;
-          send(client_fd, resp.data(), resp.size(), MSG_NOSIGNAL);
-          pending_requests_.erase(it);
-      }
   }
 
   bool ReadFromClientFd(int fd, string &buffer) {
@@ -531,13 +459,17 @@ private:
                       string resp = "OK\n";
                       send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
                   } else {
-                      if (leader_.empty()) {
-                          string resp = "NOT_LEADER\n";
-                          send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
-                      } else {
-                          // Multiplex forward
-                          SendForwardRequest(fd, line);
+                      string leader_addr = "UNKNOWN";
+                      // Find leader address in peers
+                      for(const auto& p : peers_) {
+                          if (to_string(p.port) == leader_) {
+                              leader_addr = p.host + ":" + to_string(p.port);
+                              break;
+                          }
                       }
+
+                      string resp = "NOT_LEADER " + leader_addr + "\n";
+                      send(fd, resp.data(), resp.size(), MSG_NOSIGNAL);
                   }
               } else {
                    string resp = "ERROR\n";
@@ -549,41 +481,6 @@ private:
           }
       }
       return true;
-  }
-
-  // Forward request logic
-  map<uint64_t, int> pending_requests_;
-  uint64_t next_req_id_ = 1;
-
-  void SendForwardRequest(int client_fd, const string& cmd) {
-       int leader_fd = -1;
-       // Find leader peer
-       for (auto &p : peers_) {
-           if (to_string(p.port) == leader_ || p.host + ":" + to_string(p.port) == leader_) {
-               if (p.fd == -1) {
-                   if (!ConnectToPeer(p)) {
-                        break;
-                   }
-               }
-               leader_fd = p.fd;
-               break;
-           }
-       }
-
-       if (leader_fd == -1) {
-           string msg = "ERROR: No connection to leader\n";
-           send(client_fd, msg.data(), msg.size(), MSG_NOSIGNAL);
-           return;
-       }
-
-       uint64_t req_id = next_req_id_++;
-       pending_requests_[req_id] = client_fd;
-
-       string payload;
-       payload.resize(8);
-       memcpy(&payload[0], &req_id, 8);
-       payload += cmd;
-       SendTypedMessage(leader_fd, MSG_FWD_REQ, payload);
   }
 
   string id_;
