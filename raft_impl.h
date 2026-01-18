@@ -118,7 +118,7 @@ public:
       return; // Ignore messages from terms gone by.
     if (m.term() > term_)
       NewTerm(m.term(), m.leader(), false);
-    if (m.leader() != "" && leader_ != m.leader() && other_nodes_.count(m.from())) { // Only from nodes I acknowledge.
+    if (m.leader() != "" && leader_ != m.leader() && m.from() == m.leader() && other_nodes_.count(m.from())) { // Only from nodes I acknowledge.
       leader_ = m.leader();
       server_->LeaderChange(this, leader_);
     }

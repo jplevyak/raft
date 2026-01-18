@@ -967,4 +967,74 @@ TEST_F(RaftTest, JointConsensus_DisjointCluster) {
   }
 }
 
+// Test for leader change propagation from non-leader nodes.
+// Tests the scenario where a follower sends a message claiming someone else
+// is the leader, and whether this stale information can prevent proper
+// leader election after the actual leader crashes.
+TEST_F(RaftTest, LeaderChangePropagationFromNonLeader) {
+  // 1. Start a 3-node cluster: nodes 0, 1, 2
+  LogEntry config_log_entry(ConfigLogEntry(3));
+  StartUp(3, config_log_entry);
+  Ticks(20);
+
+  // 2. Identify the leader (node A)
+  int ileader = servers_[0]->leader_[0] - '0';
+  ASSERT_GE(ileader, 0);
+  ASSERT_LE(ileader, 2);
+
+  // All nodes should agree on the leader
+  EXPECT_EQ(servers_[0]->leader_, servers_[1]->leader_);
+  EXPECT_EQ(servers_[1]->leader_, servers_[2]->leader_);
+  string original_leader = servers_[0]->leader_;
+
+  // 3. Partition the leader from the other two nodes
+  // Nodes can still communicate with each other but not with the leader
+  down_.insert(to_string(ileader));
+
+  // 4. Allow some time for followers to communicate
+  // During this time, follower messages include leader field pointing to the crashed leader
+  Ticks(5);
+
+  // 5. The two followers should eventually timeout and elect a new leader
+  // This tests whether accepting leader info from non-leader peers (line 121-124)
+  // delays or prevents the election
+  Ticks(25); // More than enough time for election timeout and new election
+
+  // 6. Verify that a new leader was elected among the remaining nodes
+  int ifollower1 = (ileader + 1) % 3;
+  int ifollower2 = (ileader + 2) % 3;
+
+  string new_leader = servers_[ifollower1]->leader_;
+
+  // The new leader should not be the crashed leader
+  EXPECT_NE(new_leader, original_leader)
+      << "New leader should be elected after original leader crashed";
+  EXPECT_NE(new_leader, "")
+      << "A new leader should be elected";
+
+  // Both followers should agree on the new leader
+  EXPECT_EQ(servers_[ifollower1]->leader_, servers_[ifollower2]->leader_)
+      << "Both followers should agree on the new leader";
+
+  // The new leader should be one of the two followers
+  EXPECT_TRUE(new_leader == to_string(ifollower1) || new_leader == to_string(ifollower2))
+      << "New leader should be one of the available nodes";
+
+  // 7. The partitioned leader may have stepped down or still think it's the leader
+  // depending on timeout behavior - we just verify it's isolated
+  // (The actual behavior is that it steps down due to lack of quorum)
+
+  // 8. Reconnect the old leader and verify proper leader convergence
+  down_.clear();
+  Ticks(20);
+
+  // After reconnection, all nodes should agree on the same leader
+  EXPECT_EQ(servers_[0]->leader_, servers_[1]->leader_);
+  EXPECT_EQ(servers_[1]->leader_, servers_[2]->leader_);
+
+  // Verify a leader exists in the cluster
+  EXPECT_NE(servers_[0]->leader_, "")
+      << "Cluster should have a leader after reconnection";
+}
+
 } // namespace raft
